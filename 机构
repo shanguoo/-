@@ -1,0 +1,99 @@
+当然，请查看以下完整的代码，包括供给区和需求区的策略，以及整合后的交易逻辑：
+
+```python
+import pandas as pd
+
+# 假设 'data' 包含每根K线的开盘价（Open）、收盘价（Close）、最高价（High）和最低价（Low）
+# data = pd.read_csv('path_to_your_csv_file.csv', index_col='Date', parse_dates=True)
+
+# 计算K线类型
+def kline_type(row):
+    full_range = row['High'] - row['Low']
+    body_size = abs(row['Close'] - row['Open'])
+    body_ratio = body_size / full_range if full_range else 0
+    return 'dynamic' if body_ratio > 0.5 else 'static'
+
+# 应用函数计算K线类型
+data['Kline_Type'] = data.apply(kline_type, axis=1)
+
+# 定义识别需求区和供给区的函数
+def calculate_zones(data):
+    demand_zones = []
+    supply_zones = []
+    temp_demand_zone = None
+    temp_supply_zone = None
+
+    for i in range(1, len(data) - 1):
+        current_row = data.iloc[i]
+        previous_row = data.iloc[i-1]
+        next_row = data.iloc[i+1]
+
+        # 开始识别需求区
+        if previous_row['Kline_Type'] == 'dynamic' and previous_row['Close'] > previous_row['Open']:
+            if current_row['Kline_Type'] == 'static':
+                if not temp_demand_zone:
+                    temp_demand_zone = {'start_index': i, 'entry': current_row['High'], 'stop_loss': current_row['Low']}
+                else:
+                    temp_demand_zone['entry'] = min(temp_demand_zone['entry'], current_row['High'])
+                    temp_demand_zone['stop_loss'] = min(temp_demand_zone['stop_loss'], current_row['Low'])
+            elif temp_demand_zone and next_row['Kline_Type'] == 'dynamic' and next_row['Close'] > next_row['Open']:
+                temp_demand_zone['end_index'] = i
+                demand_zones.append(temp_demand_zone)
+                temp_demand_zone = None
+
+        # 开始识别供给区
+        if previous_row['Kline_Type'] == 'dynamic' and previous_row['Close'] < previous_row['Open']:
+            if current_row['Kline_Type'] == 'static':
+                if not temp_supply_zone:
+                    temp_supply_zone = {'start_index': i, 'entry': current_row['Low'], 'stop_loss': current_row['High']}
+                else:
+                    temp_supply_zone['entry'] = max(temp_supply_zone['entry'], current_row['Low'])
+                    temp_supply_zone['stop_loss'] = max(temp_supply_zone['stop_loss'], current_row['High'])
+            elif temp_supply_zone and next_row['Kline_Type'] == 'dynamic' and next_row['Close'] < next_row['Open']:
+                temp_supply_zone['end_index'] = i
+                supply_zones.append(temp_supply_zone)
+                temp_supply_zone = None
+
+    return demand_zones, supply_zones
+
+# 应用区域计算
+demand_zones, supply_zones = calculate_zones(data)
+
+# 交易执行逻辑
+def trade_logic(data, demand_zones, supply_zones, account_balance, risk_per_trade):
+    open_trades = []
+    
+    for index, row in data.iterrows():
+        current_price = row['Close']
+
+        # 检查需求区买入信号
+        for zone in demand_zones:
+            if zone['start_index'] < index <= zone['end_index'] and current_price <= zone['entry']:
+                # 计算交易规模
+                trade_risk = current_price - zone['stop_loss']
+                trade_size = (account_balance * risk_per_trade) / trade_risk
+                # 执行买入
+                print(f"Buy order: Buy {trade_size} at {current_price}, stop loss at {zone['stop_loss']}")
+                open_trades.append({'type': 'long', 'size': trade_size, 'entry': current_price, 'stop_loss': zone['stop_loss']})
+
+        # 检查供给区卖出信号
+        for zone in supply_zones:
+            if zone['start_index'] < index <= zone['end_index'] and current_price >= zone['entry']:
+                # 计算交易规模
+                trade_risk = zone['stop_loss'] - current_price
+                trade_size = (account_balance * risk_per_trade) / trade_risk
+                # 执行卖出
+                print(f"Sell order: Sell {trade_size} at {current_price}, stop loss at {zone['stop_loss']}")
+                open_trades.append({'type': 'short', 'size': trade_size, 'entry': current_price, 'stop_loss': zone['stop_loss']})
+
+    return open_trades
+
+# 初始账户资金和风险参数
+account_balance = 1000
+risk_per_trade = 0.02
+
+# 执行交易逻辑
+trades = trade_logic(data, demand_zones, supply_zones, account_balance, risk_per_trade)
+```
+
+请注意，这只是一个示例代码，您可能需要根据实际情况进行调整和优化。如果有任何疑问或需要进一步解释，请随时告诉我。
